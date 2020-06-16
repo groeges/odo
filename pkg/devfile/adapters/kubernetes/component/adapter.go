@@ -23,6 +23,8 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/klog"
 
+	"github.com/openshift/odo/pkg/occlient"
+
 	"github.com/openshift/odo/pkg/component"
 	"github.com/openshift/odo/pkg/config"
 	"github.com/openshift/odo/pkg/devfile/adapters/common"
@@ -36,6 +38,7 @@ import (
 	"github.com/openshift/odo/pkg/log"
 	odoutil "github.com/openshift/odo/pkg/odo/util"
 	"github.com/openshift/odo/pkg/sync"
+	"github.com/openshift/odo/pkg/url"
 )
 
 // New instantiantes a component adapter
@@ -289,7 +292,7 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 
 	// TODO: Determine why using a.Client.DynamicClient doesnt work
 	// Need to create my own client in order to get the dynamic parts working
-	myclient, err := dynamic.NewForConfig(a.Client.KubeClientConfig)
+	dynamicClient, err := dynamic.NewForConfig(a.Client.KubeClientConfig)
 	if err != nil {
 		return err
 	}
@@ -297,7 +300,7 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	// Check to see whether deployed resource already exists. If not, create else update
 	// Get?
 	instanceFound := false
-	list, err := myclient.Resource(gvr).Namespace(namespace).List(metav1.ListOptions{})
+	list, err := dynamicClient.Resource(gvr).Namespace(namespace).List(metav1.ListOptions{})
 	if list != nil && len(list.Items) > 0 {
 		for _, item := range list.Items {
 			klog.V(3).Infof("Found %s %s with resourceVersion: %s.\n", gvk.Kind, item.GetName(), item.GetResourceVersion())
@@ -312,13 +315,41 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	if !instanceFound {
 		// Create Deployment
 		log.Infof("Creating %s...", gvk.Kind)
-		result, err = myclient.Resource(gvr).Namespace(namespace).Create(deploymentManifest, metav1.CreateOptions{})
+		result, err = dynamicClient.Resource(gvr).Namespace(namespace).Create(deploymentManifest, metav1.CreateOptions{})
 		//	result, err := a.Client.DynamicClient.Resource(gvr).Namespace(namespace).Create(deploymentManifest, metav1.CreateOptions{})
 	} else {
 		// Update Deployment
 		log.Infof("Updating %s...", gvk.Kind)
-		result, err = myclient.Resource(gvr).Namespace(namespace).Update(deploymentManifest, metav1.UpdateOptions{})
+		result, err = dynamicClient.Resource(gvr).Namespace(namespace).Update(deploymentManifest, metav1.UpdateOptions{})
 	}
+	if err != nil {
+		panic(err)
+	}
+
+	client, err := occlient.New()
+	if err != nil {
+		return err
+	}
+
+	urlList, err := url.List(client, &config.LocalConfigInfo{}, "", applicationName)
+	if err != nil {
+		return err
+	}
+	if len(urlList.Items) > 0 {
+		for _, url := range urlList.Items {
+			port := ""
+			if url.Spec.Port != 0 {
+				port = ":" + strconv.Itoa(url.Spec.Port)
+			}
+			log.Infof("\nFound URL = %s://%s%s\n", url.Spec.Protocol, url.Spec.Host, port)
+			//klog.V(3).Infof("\nFound URL = %s://%s%s\n", url.Spec.Protocol, url.Spec.Host, port)
+		}
+	}
+
+	//route, err := client.RouteClient.Routes(namespace).Get(applicationName, metav1.GetOptions{})
+	//if route != nil {
+	//	klog.V(3).Infof("Found %s\n", route)
+	//}
 
 	if err != nil {
 		s.End(false)

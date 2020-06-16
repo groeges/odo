@@ -18,6 +18,7 @@ import (
 
 	odoutil "github.com/openshift/odo/pkg/odo/util"
 
+	"k8s.io/klog"
 	ktemplates "k8s.io/kubectl/pkg/util/templates"
 )
 
@@ -172,6 +173,7 @@ func NewCmdDeploy(name, fullName string) *cobra.Command {
 	if experimental.IsExperimentalModeEnabled() {
 		deployCmd.Flags().StringVar(&do.DevfilePath, "devfile", "./devfile.yaml", "Path to a devfile.yaml")
 		deployCmd.Flags().StringVar(&do.tag, "tag", "", "Tag used to build the image")
+		deployCmd.Flags().BoolVar(&do.deployOnly, "deployOnly", false, "Do not build the application, only deploy it")
 	}
 
 	//Adding `--project` flag
