@@ -259,12 +259,18 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 		"PORT":            determinePort(parameters.EnvSpecificInfo),
 	}
 
+<<<<<<< Upstream, based on enrique/deploy_command
 	// Build a yaml decoder with the unstructured Scheme
 	yamlDecoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 
 	// This will override if manifest.yaml is present
 	writtenToManifest := false
 	manifestFile, err := os.Create(filepath.Join(a.Context, ".odo", "manifest.yaml"))
+=======
+	// TODO: Determine why using a.Client.DynamicClient doesnt work
+	// Need to create my own client in order to get the dynamic parts working
+	dynamicClient, err := dynamic.NewForConfig(a.Client.KubeClientConfig)
+>>>>>>> 08280ad Add preliminary support for multiple manifest in single yaml
 	if err != nil {
 		err = manifestFile.Close()
 		return errors.Wrap(err, "Unable to create the local manifest file")
@@ -275,10 +281,56 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 		if len(manifest) > 0 {
 			// Substitute the values in the manifest file
 			deployYaml := substitueYamlVariables(manifest, yamlSubstitutions)
+<<<<<<< Upstream, based on enrique/deploy_command
 
 			_, gvk, err := yamlDecoder.Decode([]byte(deployYaml), nil, deploymentManifest)
 			if err != nil {
 				return errors.Wrap(err, "Failed to decode the manifest yaml")
+=======
+			klog.V(3).Infof("Deploy manifest:\n%s", string(deployYaml))
+
+			// Build a yaml decoder with the unstructured Scheme
+			yamlDecoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
+
+			_, gvk, err := yamlDecoder.Decode([]byte(deployYaml), nil, deploymentManifest)
+			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: strings.ToLower(gvk.Kind + "s")}
+			klog.V(3).Infof("Manifest type: %s", gvr.String())
+
+			// Check to see whether deployed resource already exists. If not, create else update
+			instanceFound := false
+			list, err := dynamicClient.Resource(gvr).Namespace(namespace).List(metav1.ListOptions{})
+			if list != nil && len(list.Items) > 0 {
+				for _, item := range list.Items {
+					klog.V(3).Infof("Found %s %s with resourceVersion: %s.\n", gvk.Kind, item.GetName(), item.GetResourceVersion())
+					if item.GetName() == applicationName {
+						deploymentManifest.SetResourceVersion(item.GetResourceVersion())
+						instanceFound = true
+					}
+				}
+			}
+
+			s := log.Spinnerf("Deploying the manifest for %s", gvk.Kind)
+			if !instanceFound {
+				// Create Deployment
+				_, err = dynamicClient.Resource(gvr).Namespace(namespace).Create(deploymentManifest, metav1.CreateOptions{})
+				if err != nil {
+					s.End(false)
+					return errors.Wrap(err, "Failed to deploy manifest "+gvk.Kind)
+				} else {
+					log.Successf("Created manifest for %s (%s)", applicationName, gvk.Kind)
+					s.End(true)
+				}
+			} else {
+				// Update Deployment
+				_, err = dynamicClient.Resource(gvr).Namespace(namespace).Update(deploymentManifest, metav1.UpdateOptions{})
+				if err != nil {
+					s.End(false)
+					return errors.Wrap(err, "Failed to update manifest "+gvk.Kind)
+				} else {
+					log.Successf("Updated manifest for %s (%s)", applicationName, gvk.Kind)
+					s.End(true)
+				}
+>>>>>>> 08280ad Add preliminary support for multiple manifest in single yaml
 			}
 
 			deployJSON, err := deploymentManifest.MarshalJSON()
@@ -357,9 +409,16 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 		}
 	}
 
+<<<<<<< Upstream, based on enrique/deploy_command
 	_ = manifestFile.Close()
 
 	s := log.Spinner("Determining the application URL")
+=======
+	s := log.Spinner("Determining the application URL")
+
+	// Need to wait for a second to give the server time to create the artifacts
+	time.Sleep(2 * time.Second)
+>>>>>>> 08280ad Add preliminary support for multiple manifest in single yaml
 
 	// TODO: Can we use a occlient created somewhere else rather than create another
 	client, err := occlient.New()
@@ -391,6 +450,19 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	}
 	s.End(true)
 
+<<<<<<< Upstream, based on enrique/deploy_command
+=======
+	fullURL := ""
+	if len(urlList.Items) > 0 {
+		for _, url := range urlList.Items {
+			port := ""
+			//if url.Spec.Port != 0 {
+			//	port = ":" + strconv.Itoa(url.Spec.Port)
+			//}
+			fullURL = fmt.Sprintf("%s://%s%s", url.Spec.Protocol, url.Spec.Host, port)
+		}
+	}
+>>>>>>> 08280ad Add preliminary support for multiple manifest in single yaml
 	if fullURL != "" {
 		log.Successf("URL for application %s: %s", applicationName, fullURL)
 	} else {
