@@ -304,6 +304,15 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 					klog.V(3).Infof("Found %s %s with resourceVersion: %s.\n", gvk.Kind, item.GetName(), item.GetResourceVersion())
 					if item.GetName() == applicationName {
 						deploymentManifest.SetResourceVersion(item.GetResourceVersion())
+						if item.GetKind() == "Service" {
+							currentServiceSpec := item.UnstructuredContent()["spec"].(map[string]interface{})
+							if currentServiceSpec["type"] == "ClusterIP" {
+								klog.V(3).Infof("clusterIP: %s", currentServiceSpec["clusterIP"])
+								newService := deploymentManifest.UnstructuredContent()
+								newService["spec"].(map[string]interface{})["clusterIP"] = currentServiceSpec["clusterIP"]
+								deploymentManifest.SetUnstructuredContent(newService)
+							}
+						}
 						instanceFound = true
 					}
 				}
@@ -317,8 +326,8 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 					s.End(false)
 					return errors.Wrap(err, "Failed to deploy manifest "+gvk.Kind)
 				} else {
-					log.Successf("Created manifest for %s (%s)", applicationName, gvk.Kind)
 					s.End(true)
+					log.Successf("Created manifest for %s (%s)", applicationName, gvk.Kind)
 				}
 			} else {
 				// Update Deployment
@@ -327,8 +336,8 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 					s.End(false)
 					return errors.Wrap(err, "Failed to update manifest "+gvk.Kind)
 				} else {
-					log.Successf("Updated manifest for %s (%s)", applicationName, gvk.Kind)
 					s.End(true)
+					log.Successf("Updated manifest for %s (%s)", applicationName, gvk.Kind)
 				}
 >>>>>>> 08280ad Add preliminary support for multiple manifest in single yaml
 			}
