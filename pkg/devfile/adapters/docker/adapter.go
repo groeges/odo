@@ -42,7 +42,11 @@ func (k Adapter) Deploy(parameters common.DeployParameters) error {
 }
 
 func (k Adapter) DeployDelete(manifest []byte) error {
+<<<<<<< Upstream, based on enrique/deploy_command
 	return errors.New("Deploy delete command not supported when using pushTarget=Docker")
+=======
+	return errors.New("Deploy command not supported when using pushTarget=Docker")
+>>>>>>> 5079f83 Merge deployDelete code and update to support multiple doc in yaml
 }
 
 // DoesComponentExist returns true if a component with the specified name exists
