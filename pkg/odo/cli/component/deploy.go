@@ -42,7 +42,7 @@ type DeployOptions struct {
 	namespace       string
 	tag             string
 	ManifestSource  []byte
-	deployOnly     bool
+	deployOnly      bool
 }
 
 // NewDeployOptions returns new instance of BuildOptions
