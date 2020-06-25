@@ -295,7 +295,7 @@ func (a Adapter) waitForManifestDeployCompletion(applicationName string, gvr sch
 		return val, nil
 	case err := <-failure:
 		return nil, err
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		return nil, errors.Errorf("timeout while waiting for %s manifest deployment completion", applicationName)
 	}
 }
@@ -326,6 +326,13 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 		err = manifestFile.Close()
 		return errors.Wrap(err, "Unable to create the local manifest file")
 	}
+
+	defer func() {
+		merr := manifestFile.Close()
+		if err == nil {
+			err = merr
+		}
+	}()
 
 	manifests := bytes.Split(parameters.ManifestSource, []byte("---"))
 	for _, manifest := range manifests {
@@ -363,21 +370,17 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 
 			// Check to see whether deployed resource already exists. If not, create else update
 			instanceFound := false
-			list, err := a.Client.DynamicClient.Resource(gvr).Namespace(namespace).List(metav1.ListOptions{})
-			if list != nil && len(list.Items) > 0 {
-				for _, item := range list.Items {
-					if item.GetName() == applicationName {
-						deploymentManifest.SetResourceVersion(item.GetResourceVersion())
-						deploymentManifest.SetAnnotations(item.GetAnnotations())
-						if item.GetKind() == "Service" {
-							currentServiceSpec := item.UnstructuredContent()["spec"].(map[string]interface{})
-							if currentServiceSpec["type"] == "ClusterIP" {
-								newService := deploymentManifest.UnstructuredContent()
-								newService["spec"].(map[string]interface{})["clusterIP"] = currentServiceSpec["clusterIP"]
-								deploymentManifest.SetUnstructuredContent(newService)
-							}
-						}
-						instanceFound = true
+			item, err := a.Client.DynamicClient.Resource(gvr).Namespace(namespace).Get(deploymentManifest.GetName(), metav1.GetOptions{})
+			if item != nil && err == nil {
+				instanceFound = true
+				deploymentManifest.SetResourceVersion(item.GetResourceVersion())
+				deploymentManifest.SetAnnotations(item.GetAnnotations())
+				if item.GetKind() == "Service" {
+					currentServiceSpec := item.UnstructuredContent()["spec"].(map[string]interface{})
+					if currentServiceSpec["type"] == "ClusterIP" {
+						newService := deploymentManifest.UnstructuredContent()
+						newService["spec"].(map[string]interface{})["clusterIP"] = currentServiceSpec["clusterIP"]
+						deploymentManifest.SetUnstructuredContent(newService)
 					}
 				}
 			}
@@ -414,8 +417,6 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 		}
 	}
 
-	_ = manifestFile.Close()
-
 	s := log.Spinner("Determining the application URL")
 
 	// TODO: Can we use a occlient created somewhere else rather than create another
@@ -425,6 +426,7 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	}
 
 	// Need to wait for a second to give the server time to create the artifacts
+	// TODO: Replace wait with a wait for object to be created
 	time.Sleep(2 * time.Second)
 
 	fullURL := ""
