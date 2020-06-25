@@ -18,7 +18,6 @@ import (
 
 	odoutil "github.com/openshift/odo/pkg/odo/util"
 
-	"k8s.io/klog"
 	ktemplates "k8s.io/kubectl/pkg/util/templates"
 )
 

@@ -230,7 +230,6 @@ func (ddo *DeployDeleteOptions) DevfileDeployDelete() error {
 	if err != nil {
 		return err
 	}
-<<<<<<< Upstream, based on enrique/deploy_command
 	componentName = componentName + "-deploy"
 
 	kc := kubernetes.KubernetesContext{
@@ -256,24 +255,6 @@ func (ddo *DeployDeleteOptions) DevfileDeployDelete() error {
 		log.Success(ddo.ManifestPath + " deleted. Exiting gracefully :)")
 		return nil
 	} else if manifestErr != nil {
-=======
-	//TODO, same name as in deploy append `-deploy` to componentName
-
-	kc := kubernetes.KubernetesContext{
-		Namespace: ddo.namespace,
-	}
-
-	devfileHandler, err := adapters.NewPlatformAdapter(componentName, ddo.componentContext, devObj, kc)
-	if err != nil {
-		return err
-	}
-
-	spinner := log.Spinner(fmt.Sprintf("Deleting deployed devfile component %s", componentName))
-	defer spinner.End(false)
-
-	err = devfileHandler.DeployDelete(ddo.ManifestSource)
-	if err != nil {
->>>>>>> 5079f83 Merge deployDelete code and update to support multiple doc in yaml
 		err = os.Remove(ddo.ManifestPath)
 		return err
 	}

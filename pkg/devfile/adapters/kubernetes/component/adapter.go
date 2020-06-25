@@ -471,18 +471,14 @@ func (a Adapter) DeployDelete(manifest []byte) (err error) {
 			klog.V(3).Infof("Deploy manifest:\n\n%s", deploymentManifest)
 			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: strings.ToLower(gvk.Kind + "s")}
 			klog.V(3).Infof("Manifest type: %s", gvr.String())
-			// TODO: Determine why using a.Client.DynamicClient doesnt work
-			// Need to create my own client in order to get the dynamic parts working
-			myclient, err := dynamic.NewForConfig(a.Client.KubeClientConfig)
-			if err != nil {
-				return err
-			}
-			_, err = myclient.Resource(gvr).Namespace(a.Client.Namespace).Get(deploymentManifest.GetName(), metav1.GetOptions{})
+
+			_, err = a.Client.DynamicClient.Resource(gvr).Namespace(a.Client.Namespace).Get(deploymentManifest.GetName(), metav1.GetOptions{})
 			if err != nil {
 				errorMessage := "Could not delete deployment " + deploymentManifest.GetName() + " as deployment was not found"
 				return errors.New(errorMessage)
 			}
-			err = myclient.Resource(gvr).Namespace(a.Client.Namespace).Delete(deploymentManifest.GetName(), &metav1.DeleteOptions{})
+
+			err = a.Client.DynamicClient.Resource(gvr).Namespace(a.Client.Namespace).Delete(deploymentManifest.GetName(), &metav1.DeleteOptions{})
 			if err != nil {
 				return err
 			}
