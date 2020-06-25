@@ -246,6 +246,7 @@ func getNamedCondition(route *unstructured.Unstructured, conditionTypeValue stri
 	conditions := status["conditions"].([]interface{})
 	for i := range conditions {
 		c := conditions[i].(map[string]interface{})
+		klog.V(4).Infof("Condition returned\n%s\n", c)
 		if c["type"] == conditionTypeValue {
 			return c
 		}
@@ -253,8 +254,9 @@ func getNamedCondition(route *unstructured.Unstructured, conditionTypeValue stri
 	return nil
 }
 
-func (a Adapter) waitForDeploymentCompletion(applicationName string, gvr schema.GroupVersionResource, conditionTypeValue string) (*unstructured.Unstructured, error) {
-	klog.V(4).Infof("Waiting for %s deployment completion", applicationName)
+// TODO: Create a function to wait for deploment completion of any unstructured object
+func (a Adapter) waitForManifestDeployCompletion(applicationName string, gvr schema.GroupVersionResource, conditionTypeValue string) (*unstructured.Unstructured, error) {
+	klog.V(4).Infof("Waiting for %s manifest deployment completion", applicationName)
 	w, err := a.Client.DynamicClient.Resource(gvr).Namespace(a.Client.Namespace).Watch(metav1.ListOptions{FieldSelector: "metadata.name=" + applicationName})
 	if err != nil {
 		return nil, errors.Wrapf(err, "unable to watch deployment")
@@ -273,10 +275,16 @@ func (a Adapter) waitForDeploymentCompletion(applicationName string, gvr schema.
 				failure <- errors.New("watch channel was closed")
 				return
 			}
-			if route, ok := val.Object.(*unstructured.Unstructured); ok {
-				condition := getNamedCondition(route, conditionTypeValue)
+			if watchObject, ok := val.Object.(*unstructured.Unstructured); ok {
+				// TODO: Add more details on what to check to see if object deployment is complete
+				// Currently only checks to see if status.conditions[] contains a condition with type = conditionTypeValue
+				condition := getNamedCondition(watchObject, conditionTypeValue)
 				if condition != nil {
-					success <- route
+					if condition["status"] == "Fail" {
+						failure <- fmt.Errorf("manifest deployment %s failed", applicationName)
+					} else if condition["status"] == "True" {
+						success <- watchObject
+					}
 				}
 			}
 		}
@@ -288,7 +296,7 @@ func (a Adapter) waitForDeploymentCompletion(applicationName string, gvr schema.
 	case err := <-failure:
 		return nil, err
 	case <-time.After(10 * time.Second):
-		return nil, errors.Errorf("timeout while waiting for %s deployment roll out", applicationName)
+		return nil, errors.Errorf("timeout while waiting for %s manifest deployment completion", applicationName)
 	}
 }
 
