@@ -83,7 +83,7 @@ var _ = Describe("odo devfile deploy command tests", func() {
 			helper.CmdShouldPass("odo", "url", "create", "--port", "3000")
 			helper.CopyExampleDevFile(filepath.Join("source", "devfilesV2", "nodejs", "devfile-no-manifest.yaml"), filepath.Join(context, "devfile.yaml"))
 
-			cmdOutput := helper.CmdShouldFail("odo", "deploy", "--tag", imageTag, "--deployOnly")
+			cmdOutput := helper.CmdShouldFail("odo", "deploy", "--tag", imageTag)
 			Expect(cmdOutput).To(ContainSubstring("Unable to deploy as alpha.deployment-manifest is not defined in devfile.yaml"))
 		})
 	})
@@ -96,7 +96,7 @@ var _ = Describe("odo devfile deploy command tests", func() {
 			err := helper.ReplaceDevfileField("devfile.yaml", "alpha.deployment-manifest", "google.com")
 			Expect(err).To(BeNil())
 
-			cmdOutput := helper.CmdShouldFail("odo", "deploy", "--tag", imageTag, "--deployOnly")
+			cmdOutput := helper.CmdShouldFail("odo", "deploy", "--tag", imageTag)
 			Expect(cmdOutput).To(ContainSubstring("Invalid manifest url"))
 		})
 	})
@@ -109,7 +109,7 @@ var _ = Describe("odo devfile deploy command tests", func() {
 			err := helper.ReplaceDevfileField("devfile.yaml", "alpha.deployment-manifest", "http://github.com/myfile.yaml")
 			Expect(err).To(BeNil())
 
-			cmdOutput := helper.CmdShouldFail("odo", "deploy", "--tag", imageTag, "--deployOnly")
+			cmdOutput := helper.CmdShouldFail("odo", "deploy", "--tag", imageTag)
 			Expect(cmdOutput).To(ContainSubstring("Unable to download manifest"))
 		})
 	})
