@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/klog"
 
+	routev1 "github.com/openshift/api/route/v1"
 	"github.com/openshift/odo/pkg/component"
 	"github.com/openshift/odo/pkg/config"
 	"github.com/openshift/odo/pkg/devfile/adapters/common"
@@ -38,7 +39,6 @@ import (
 	"github.com/openshift/odo/pkg/occlient"
 	odoutil "github.com/openshift/odo/pkg/odo/util"
 	"github.com/openshift/odo/pkg/sync"
-	"github.com/openshift/odo/pkg/url"
 )
 
 const (
@@ -244,11 +244,25 @@ func (a Adapter) waitForManifestDeployCompletion(applicationName string, gvr sch
 	}
 }
 
+// GetProtocol returns the protocol string
+func getProtocol(route routev1.Route) string {
+	if route.Spec.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
 // Build image for devfile project
 func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	namespace := a.Client.Namespace
 	applicationName := a.ComponentName + "-deploy"
 	deploymentManifest := &unstructured.Unstructured{}
+
+	// TODO: Can we use a occlient created somewhere else rather than create another
+	client, err := occlient.New()
+	if err != nil {
+		return err
+	}
 
 	// Specify the substitution keys and values
 	yamlSubstitutions := map[string]string{
@@ -283,11 +297,16 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 
 			_, gvk, err := yamlDecoder.Decode([]byte(deployYaml), nil, deploymentManifest)
 			if err != nil {
-				return errors.Wrap(err, "Failed to decode the manifest yaml")
+				return errors.New("Failed to decode the manifest yaml")
 			}
 
 			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: strings.ToLower(gvk.Kind + "s")}
 			klog.V(3).Infof("Manifest type: %s", gvr.String())
+
+			supported, err := client.IsGenericResourceSupported(gvk.Group, gvk.Version, strings.ToLower(gvk.Kind+"s"))
+			if err == nil && !supported {
+				return errors.New(fmt.Sprintf("Unable to deploy component %s as %s is not supported", a.ComponentName, gvk.Kind))
+			}
 
 			labels := map[string]string{
 				"component": applicationName,
@@ -357,35 +376,31 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 
 	s := log.Spinner("Determining the application URL")
 
-	// TODO: Can we use a occlient created somewhere else rather than create another
-	client, err := occlient.New()
-	if err != nil {
-		return err
-	}
-
 	// Need to wait for a second to give the server time to create the artifacts
 	// TODO: Replace wait with a wait for object to be created
 	time.Sleep(2 * time.Second)
 
+	//fullURL, err := getApplicationURL(applicationName)
+
 	fullURL := ""
-	urlList, err := url.List(client, &config.LocalConfigInfo{}, "", applicationName)
-	if err != nil {
-		s.End(false)
-		return errors.Wrapf(err, "Unable to determine URL for application %s", applicationName)
-	}
-	if len(urlList.Items) > 0 {
-		for _, url := range urlList.Items {
-			fullURL = fmt.Sprintf("%s://%s", url.Spec.Protocol, url.Spec.Host)
+	//urlList, err := url.List(client, &config.LocalConfigInfo{}, "", applicationName)
+	routeSupported, err := client.IsRouteSupported()
+	if routeSupported {
+		route, err := client.GetRoute(applicationName)
+		if err != nil {
+			// No URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
+			knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
+			knRoute, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
+			if err != nil {
+				s.End(false)
+				return errors.Wrap(err, "error while waiting for deployment completion")
+			}
+			fullURL = knRoute.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
+		} else {
+			fullURL = fmt.Sprintf("%s://%s", getProtocol(*route), route.Spec.Host)
 		}
 	} else {
-		// No URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
-		knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
-		route, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
-		if err != nil {
-			s.End(false)
-			return errors.Wrap(err, "error while waiting for deployment completion")
-		}
-		fullURL = route.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
+		// TODO: Look for other resources, ie Ingress
 	}
 
 	if fullURL != "" {
