@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/klog"
 
+	routev1 "github.com/openshift/api/route/v1"
 	"github.com/openshift/odo/pkg/component"
 	"github.com/openshift/odo/pkg/config"
 	"github.com/openshift/odo/pkg/devfile/adapters/common"
@@ -38,11 +39,11 @@ import (
 	"github.com/openshift/odo/pkg/occlient"
 	odoutil "github.com/openshift/odo/pkg/odo/util"
 	"github.com/openshift/odo/pkg/sync"
-	"github.com/openshift/odo/pkg/url"
 )
 
 const (
-	DeployWaitTimeout = 60 * time.Second
+	DeployWaitTimeout     = 30 * time.Second
+	DeployComponentSuffix = "-deploy"
 )
 
 // New instantiantes a component adapter
@@ -185,12 +186,14 @@ func substitueYamlVariables(baseYaml []byte, yamlSubstitutions map[string]string
 
 func getNamedCondition(route *unstructured.Unstructured, conditionTypeValue string) map[string]interface{} {
 	status := route.UnstructuredContent()["status"].(map[string]interface{})
-	conditions := status["conditions"].([]interface{})
-	for i := range conditions {
-		c := conditions[i].(map[string]interface{})
-		klog.V(4).Infof("Condition returned\n%s\n", c)
-		if c["type"] == conditionTypeValue {
-			return c
+	if status["conditions"] != nil {
+		conditions := status["conditions"].([]interface{})
+		for i := range conditions {
+			c := conditions[i].(map[string]interface{})
+			klog.V(4).Infof("Condition returned\n%s\n", c)
+			if c["type"] == conditionTypeValue {
+				return c
+			}
 		}
 	}
 	return nil
@@ -218,6 +221,7 @@ func (a Adapter) waitForManifestDeployCompletion(applicationName string, gvr sch
 				return
 			}
 			if watchObject, ok := val.Object.(*unstructured.Unstructured); ok {
+				klog.V(4).Infof("Watch object is:\n%s", watchObject)
 				// TODO: Add more details on what to check to see if object deployment is complete
 				// Currently only checks to see if status.conditions[] contains a condition with type = conditionTypeValue
 				condition := getNamedCondition(watchObject, conditionTypeValue)
@@ -244,10 +248,68 @@ func (a Adapter) waitForManifestDeployCompletion(applicationName string, gvr sch
 	}
 }
 
+// GetProtocol returns the protocol string
+func getProtocol(route routev1.Route) string {
+	if route.Spec.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func pluraliseKind(gvkKind string) (kind string) {
+	// gvkKind is normally a singular noun and we need to have the kind as a plural
+	// i.e. Deploment => Deployments
+	//      Route => Routes
+	//      Ingress => Ingresses
+	kind = strings.ToLower(gvkKind + "s")
+	if strings.HasSuffix(gvkKind, "s") {
+		kind = strings.ToLower(gvkKind + "es")
+	}
+	return kind
+}
+
+func (a Adapter) getApplicationURL(applicationName string) (fullURL string, err error) {
+	// TODO: Can we use a occlient created somewhere else rather than create another
+	client, err := occlient.New()
+	if err != nil {
+		return "", err
+	}
+
+	// Need to wait for a second to give the server time to create the artifacts
+	// TODO: Replace wait with a wait for object to be created (need to determine which object!!!)
+	time.Sleep(2 * time.Second)
+
+	fullURL = ""
+	routeSupported, _ := client.IsRouteSupported()
+	if routeSupported {
+		route, err := client.GetRoute(applicationName)
+		if err != nil {
+			// No URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
+			knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
+			knRoute, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
+			if err != nil {
+				return "", errors.Wrap(err, "error while waiting for deployment completion")
+			}
+			fullURL = knRoute.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
+		} else {
+			fullURL = fmt.Sprintf("%s://%s", getProtocol(*route), route.Spec.Host)
+		}
+	} else {
+		// TODO: Look for other resources, ie Ingress
+		return "", errors.New("Route not supported")
+	}
+
+	if fullURL == "" {
+		return "", errors.New("URL not able to be found")
+	}
+
+	return fullURL, nil
+}
+
 // Build image for devfile project
 func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	namespace := a.Client.Namespace
-	applicationName := a.ComponentName + "-deploy"
+	applicationName := a.ComponentName + DeployComponentSuffix
 	deploymentManifest := &unstructured.Unstructured{}
 
 	// Specify the substitution keys and values
@@ -283,11 +345,21 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 
 			_, gvk, err := yamlDecoder.Decode([]byte(deployYaml), nil, deploymentManifest)
 			if err != nil {
-				return errors.Wrap(err, "Failed to decode the manifest yaml")
+				return errors.New("Failed to decode the manifest yaml")
 			}
 
-			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: strings.ToLower(gvk.Kind + "s")}
+			kind := pluraliseKind(gvk.Kind)
+			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: kind}
 			klog.V(3).Infof("Manifest type: %s", gvr.String())
+
+			//resourceSupported, err := client.IsGenericResourceSupported(gvk.Group, gvk.Version, kind)
+			//if err != nil {
+			//	return errors.Wrap(err, fmt.Sprintf("Unable to deploy component %s of kind %s", a.ComponentName, gvk.Kind))
+			//}
+
+			//if !resourceSupported {
+			//	return errors.New(fmt.Sprintf("Unable to deploy component %s as %s is not supported", a.ComponentName, gvk.Kind))
+			//}
 
 			labels := map[string]string{
 				"component": applicationName,
@@ -331,6 +403,10 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 			result := &unstructured.Unstructured{}
 			if !instanceFound {
 				result, err = a.Client.DynamicClient.Resource(gvr).Namespace(namespace).Create(deploymentManifest, metav1.CreateOptions{})
+				//_, err := a.waitForManifestDeployCompletion(applicationName, gvr, "Available")
+				//if err != nil {
+				//	klog.V(3).Infof("error while waiting for deployment completion for %s", gvr)
+				//}
 			} else {
 				result, err = a.Client.DynamicClient.Resource(gvr).Namespace(namespace).Update(deploymentManifest, metav1.UpdateOptions{})
 			}
@@ -357,43 +433,13 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 
 	s := log.Spinner("Determining the application URL")
 
-	// TODO: Can we use a occlient created somewhere else rather than create another
-	client, err := occlient.New()
-	if err != nil {
-		return err
-	}
-
-	// Need to wait for a second to give the server time to create the artifacts
-	// TODO: Replace wait with a wait for object to be created
-	time.Sleep(2 * time.Second)
-
-	fullURL := ""
-	urlList, err := url.List(client, &config.LocalConfigInfo{}, "", applicationName)
+	fullURL, err := a.getApplicationURL(applicationName)
 	if err != nil {
 		s.End(false)
-		return errors.Wrapf(err, "Unable to determine URL for application %s", applicationName)
-	}
-	if len(urlList.Items) > 0 {
-		for _, url := range urlList.Items {
-			fullURL = fmt.Sprintf("%s://%s", url.Spec.Protocol, url.Spec.Host)
-		}
+		log.Errorf("Unable to determine the application URL for component %s: %s", a.ComponentName, err)
 	} else {
-		// No URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
-		knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
-		route, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
-		if err != nil {
-			s.End(false)
-			return errors.Wrap(err, "error while waiting for deployment completion")
-		}
-		fullURL = route.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
-	}
-
-	if fullURL != "" {
 		s.End(true)
 		log.Successf("Successfully deployed component: %s", fullURL)
-	} else {
-		s.End(false)
-		log.Errorf("URL unable to be determined for component %s", a.ComponentName)
 	}
 
 	return nil
@@ -411,7 +457,8 @@ func (a Adapter) DeployDelete(manifest []byte) (err error) {
 				return err
 			}
 			klog.V(3).Infof("Deploy manifest:\n\n%s", deploymentManifest)
-			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: strings.ToLower(gvk.Kind + "s")}
+			kind := pluraliseKind(gvk.Kind)
+			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: kind}
 			klog.V(3).Infof("Manifest type: %s", gvr.String())
 
 			_, err = a.Client.DynamicClient.Resource(gvr).Namespace(a.Client.Namespace).Get(deploymentManifest.GetName(), metav1.GetOptions{})
