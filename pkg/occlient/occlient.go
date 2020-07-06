@@ -3358,11 +3358,6 @@ func (c *Client) IsImageStreamSupported() (bool, error) {
 	return c.isResourceSupported("image.openshift.io", "v1", "imagestreams")
 }
 
-func (c *Client) IsGenericResourceSupported(apiGroup, apiVersion, resourceName string) (bool, error) {
-
-	return c.isResourceSupported(apiGroup, apiVersion, resourceName)
-}
-
 // GenerateOwnerReference genertes an ownerReference which can then be set as
 // owner for various OpenShift objects and ensure that when the owner object is
 // deleted from the cluster, all other objects are automatically removed by
