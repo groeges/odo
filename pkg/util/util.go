@@ -1013,13 +1013,13 @@ func LoadFileIntoMemory(URL string) (fileBytes []byte, err error) {
 		// check to see if filepath exists
 		info, err := os.Stat(filepath)
 		if os.IsNotExist(err) || info.IsDir() {
-			return nil, errors.New(fmt.Sprintf("unable to read url: %s, %s", URL, err))
+			return nil, errors.New(fmt.Sprintf("unable to read file: %s, %s", URL, err))
 		}
 
 		// read the bytes from the filepath
 		fileBytes, err = ioutil.ReadFile(filepath)
 		if err != nil {
-			return nil, errors.New(fmt.Sprintf("unable to read url: %s, %s", URL, err))
+			return nil, errors.New(fmt.Sprintf("unable to read file: %s, %s", URL, err))
 		}
 
 		return fileBytes, nil
