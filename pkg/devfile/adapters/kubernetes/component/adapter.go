@@ -268,13 +268,20 @@ func pluraliseKind(gvkKind string) (kind string) {
 	return kind
 }
 
-func (a Adapter) getApplicationURL(applicationName string) (fullURL string, err error) {
-	// TODO: Can we use a occlient created somewhere else rather than create another
-	client, err := occlient.New()
+func getApplicationURLFromService(client *occlient.Client, applicationName string) (fullURL string) {
+	service, err := client.GetServiceFromName(applicationName)
 	if err != nil {
-		return "", err
+		return ""
 	}
 
+	if service.Status.LoadBalancer.Size() > 0 {
+		fullURL = fmt.Sprintf("http://%s:%d", service.Status.LoadBalancer.Ingress[0].Hostname, service.Spec.Ports[0].NodePort)
+	}
+
+	return fullURL
+}
+
+func (a Adapter) getApplicationURL(client *occlient.Client, applicationName string) (fullURL string, err error) {
 	// Need to wait for a second to give the server time to create the artifacts
 	// TODO: Replace wait with a wait for object to be created (need to determine which object!!!)
 	time.Sleep(2 * time.Second)
@@ -284,13 +291,17 @@ func (a Adapter) getApplicationURL(applicationName string) (fullURL string, err 
 		labelSelector := fmt.Sprintf("%v=%v", "component", applicationName)
 		routes, err := client.ListRoutes(labelSelector)
 		if err != nil || len(routes) <= 0 {
-			// No URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
-			knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
-			knRoute, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
-			if err != nil {
-				return "", errors.Wrap(err, "error while waiting for deployment completion")
+			// No URL found - try looking in the Service
+			fullURL = getApplicationURLFromService(client, applicationName)
+			if fullURL == "" {
+				// still no URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
+				knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
+				knRoute, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
+				if err != nil {
+					return "", errors.Wrap(err, "error while waiting for deployment completion")
+				}
+				fullURL = knRoute.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
 			}
-			fullURL = knRoute.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
 		} else {
 			if len(routes) == 1 {
 				fullURL = fmt.Sprintf("%s://%s", getProtocol(routes[0]), routes[0].Spec.Host)
@@ -299,13 +310,8 @@ func (a Adapter) getApplicationURL(applicationName string) (fullURL string, err 
 			}
 		}
 	} else {
-		// TODO: Look for other resources, ie Ingress
-		service, err := client.GetServiceFromName(applicationName)
-		if err != nil {
-			return "", errors.Wrap(err, "service not found")
-		}
-		klog.V(3).Infof("Service: \n%s", service)
-		fullURL = fmt.Sprintf("http://%s:%d", service.Status.LoadBalancer.Ingress[0].Hostname, service.Spec.Ports[0].NodePort)
+		// Look for other resources, ie Nodeport / Ingress
+		fullURL = getApplicationURLFromService(client, applicationName)
 	}
 
 	if fullURL == "" {
@@ -317,6 +323,12 @@ func (a Adapter) getApplicationURL(applicationName string) (fullURL string, err 
 
 // Build image for devfile project
 func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
+	// TODO: Can we use a occlient created somewhere else rather than create another
+	client, err := occlient.New()
+	if err != nil {
+		return err
+	}
+
 	namespace := a.Client.Namespace
 	applicationName := a.ComponentName + DeployComponentSuffix
 	deploymentManifest := &unstructured.Unstructured{}
@@ -326,6 +338,8 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 		"CONTAINER_IMAGE": parameters.Tag,
 		"COMPONENT_NAME":  applicationName,
 		"PORT":            determinePort(parameters.EnvSpecificInfo),
+		"NAMESPACE":       namespace,
+		"HOST_NAME":       "test",
 	}
 
 	// Build a yaml decoder with the unstructured Scheme
@@ -429,7 +443,7 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 
 	s := log.Spinner("Determining the application URL")
 
-	fullURL, err := a.getApplicationURL(applicationName)
+	fullURL, err := a.getApplicationURL(client, applicationName)
 	if err != nil {
 		s.End(false)
 		log.Errorf("Unable to determine the application URL for component %s: %s", a.ComponentName, err)
