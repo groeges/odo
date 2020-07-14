@@ -279,11 +279,11 @@ func (a Adapter) getApplicationURL(applicationName string) (fullURL string, err 
 	// TODO: Replace wait with a wait for object to be created (need to determine which object!!!)
 	time.Sleep(2 * time.Second)
 
-	fullURL = ""
 	routeSupported, _ := client.IsRouteSupported()
 	if routeSupported {
-		route, err := client.GetRoute(applicationName)
-		if err != nil {
+		labelSelector := fmt.Sprintf("%v=%v", "component", applicationName)
+		routes, err := client.ListRoutes(labelSelector)
+		if err != nil || len(routes) <= 0 {
 			// No URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
 			knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
 			knRoute, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
@@ -292,11 +292,20 @@ func (a Adapter) getApplicationURL(applicationName string) (fullURL string, err 
 			}
 			fullURL = knRoute.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
 		} else {
-			fullURL = fmt.Sprintf("%s://%s", getProtocol(*route), route.Spec.Host)
+			if len(routes) == 1 {
+				fullURL = fmt.Sprintf("%s://%s", getProtocol(routes[0]), routes[0].Spec.Host)
+			} else {
+				return "", errors.New("multiple routes found")
+			}
 		}
 	} else {
 		// TODO: Look for other resources, ie Ingress
-		return "", errors.New("Route not supported")
+		service, err := client.GetServiceFromName(applicationName)
+		if err != nil {
+			return "", errors.Wrap(err, "service not found")
+		}
+		klog.V(3).Infof("Service: \n%s", service)
+		fullURL = fmt.Sprintf("http://%s:%d", service.Status.LoadBalancer.Ingress[0].Hostname, service.Spec.Ports[0].NodePort)
 	}
 
 	if fullURL == "" {
@@ -352,15 +361,6 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: kind}
 			klog.V(3).Infof("Manifest type: %s", gvr.String())
 
-			//resourceSupported, err := client.IsGenericResourceSupported(gvk.Group, gvk.Version, kind)
-			//if err != nil {
-			//	return errors.Wrap(err, fmt.Sprintf("Unable to deploy component %s of kind %s", a.ComponentName, gvk.Kind))
-			//}
-
-			//if !resourceSupported {
-			//	return errors.New(fmt.Sprintf("Unable to deploy component %s as %s is not supported", a.ComponentName, gvk.Kind))
-			//}
-
 			labels := map[string]string{
 				"component": applicationName,
 			}
@@ -387,7 +387,7 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 				// the manifest cannot have an empty `ClusterIP` defintion, so we need to copy this from the existing definition.
 				if item.GetKind() == "Service" {
 					currentServiceSpec := item.UnstructuredContent()["spec"].(map[string]interface{})
-					if currentServiceSpec["type"] == "ClusterIP" {
+					if currentServiceSpec["clusterIP"] != nil && currentServiceSpec["clusterIP"] != "" {
 						newService := deploymentManifest.UnstructuredContent()
 						newService["spec"].(map[string]interface{})["clusterIP"] = currentServiceSpec["clusterIP"]
 						deploymentManifest.SetUnstructuredContent(newService)
@@ -403,10 +403,6 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 			result := &unstructured.Unstructured{}
 			if !instanceFound {
 				result, err = a.Client.DynamicClient.Resource(gvr).Namespace(namespace).Create(deploymentManifest, metav1.CreateOptions{})
-				//_, err := a.waitForManifestDeployCompletion(applicationName, gvr, "Available")
-				//if err != nil {
-				//	klog.V(3).Infof("error while waiting for deployment completion for %s", gvr)
-				//}
 			} else {
 				result, err = a.Client.DynamicClient.Resource(gvr).Namespace(namespace).Update(deploymentManifest, metav1.UpdateOptions{})
 			}

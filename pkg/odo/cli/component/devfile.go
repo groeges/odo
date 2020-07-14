@@ -151,24 +151,24 @@ func (do *DeployOptions) DevfileDeploy() (err error) {
 		return err
 	}
 
-	buildParams := common.BuildParameters{
-		Path:            do.sourcePath,
-		Tag:             do.tag,
-		DockerfileBytes: do.DockerfileBytes,
-		EnvSpecificInfo: *do.EnvSpecificInfo,
-	}
+	//	buildParams := common.BuildParameters{
+	//		Path:            do.sourcePath,
+	//		Tag:             do.tag,
+	//		DockerfileBytes: do.DockerfileBytes,
+	//		EnvSpecificInfo: *do.EnvSpecificInfo,
+	//	}
 
 	log.Infof("\nBuilding component %s", componentName)
 	// Build image for the component
-	err = devfileHandler.Build(buildParams)
-	if err != nil {
-		log.Errorf(
-			"Failed to build component with name %s.\nError: %v",
-			componentName,
-			err,
-		)
-		os.Exit(1)
-	}
+	//	err = devfileHandler.Build(buildParams)
+	//	if err != nil {
+	//		log.Errorf(
+	//			"Failed to build component with name %s.\nError: %v",
+	//			componentName,
+	//			err,
+	//		)
+	//		os.Exit(1)
+	//	}
 	log.Successf("Successfully built container image: %s", do.tag)
 
 	deployParams := common.DeployParameters{

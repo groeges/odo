@@ -2832,6 +2832,11 @@ func (c *Client) GetDeploymentConfigsFromSelector(selector string) ([]appsv1.Dep
 	return dcList.Items, nil
 }
 
+func (c *Client) GetServiceFromName(name string) (*corev1.Service, error) {
+	service, err := c.kubeClient.CoreV1().Services(c.Namespace).Get(name, metav1.GetOptions{})
+	return service, err
+}
+
 // GetServicesFromSelector returns an array of Service resources which match the
 // given selector
 func (c *Client) GetServicesFromSelector(selector string) ([]corev1.Service, error) {
