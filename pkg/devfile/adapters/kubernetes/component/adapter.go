@@ -191,11 +191,10 @@ func (a Adapter) Build(parameters common.BuildParameters) (err error) {
 	return errors.New("unable to build image, only Openshift BuildConfig build is supported")
 }
 
-func determinePort(envSpecificInfo envinfo.EnvSpecificInfo) string {
+func determinePort(envSpecificInfo envinfo.EnvSpecificInfo) (deploymentPort string) {
 	// Determine port to use from first non-Docker route in env.yaml)
-	deploymentPort := ""
 	for _, localURL := range envSpecificInfo.GetURL() {
-		if localURL.Kind != envinfo.DOCKER {
+		if localURL.Kind == envinfo.ROUTE {
 			deploymentPort = strconv.Itoa(localURL.Port)
 			break
 		}

@@ -1,6 +1,7 @@
 package component
 
 import (
+	"bytes"
 	"fmt"
 	"path/filepath"
 
@@ -65,11 +66,7 @@ func (do *DeployOptions) CompleteDevfilePath() {
 // Complete completes deploy args
 func (do *DeployOptions) Complete(name string, cmd *cobra.Command, args []string) (err error) {
 	do.CompleteDevfilePath()
-	envInfo, err := envinfo.NewEnvSpecificInfo(do.componentContext)
-	if err != nil {
-		return errors.Wrap(err, "unable to retrieve configuration information")
-	}
-	do.EnvSpecificInfo = envInfo
+
 	do.Context = genericclioptions.NewDevfileContext(cmd)
 
 	return nil
@@ -79,6 +76,13 @@ func (do *DeployOptions) Complete(name string, cmd *cobra.Command, args []string
 func (do *DeployOptions) Validate() (err error) {
 
 	log.Infof("\nValidation")
+
+	envInfo, err := envinfo.NewEnvSpecificInfo(do.componentContext)
+	if err != nil {
+		return errors.Wrap(err, "unable to retrieve configuration information")
+	}
+	do.EnvSpecificInfo = envInfo
+
 	// Validate the --tag
 	if do.tag == "" {
 		return errors.New("odo deploy requires a tag, in the format <registry>/namespace>/<image>")
@@ -147,6 +151,23 @@ func (do *DeployOptions) Validate() (err error) {
 		return errors.Wrap(err, "unable to download manifest from URL specified in devfile")
 	}
 	do.ManifestSource = manifestBytes
+
+	// check if manifestSource contains PORT template variable
+	// if it does, then check we have an port setup in env.yaml
+	if bytes.Contains(manifestBytes, []byte("PORT")) {
+		deploymentPort := 0
+		for _, localURL := range do.EnvSpecificInfo.GetURL() {
+			if localURL.Kind == envinfo.ROUTE {
+				deploymentPort = localURL.Port
+				break
+			}
+		}
+
+		if deploymentPort == 0 {
+			s.End(false)
+			return errors.New("Unable to find `port` for deployment. `odo url create` must be run prior to `odo deploy`")
+		}
+	}
 
 	s.End(true)
 
