@@ -218,7 +218,7 @@ func substitueYamlVariables(baseYaml []byte, yamlSubstitutions map[string]string
 
 func getNamedCondition(route *unstructured.Unstructured, conditionTypeValue string) map[string]interface{} {
 	status := route.UnstructuredContent()["status"].(map[string]interface{})
-	if status["conditions"] != nil {
+	if status != nil && status["conditions"] != nil {
 		conditions := status["conditions"].([]interface{})
 		for i := range conditions {
 			c := conditions[i].(map[string]interface{})
@@ -231,7 +231,7 @@ func getNamedCondition(route *unstructured.Unstructured, conditionTypeValue stri
 	return nil
 }
 
-// TODO: Create a function to wait for deploment completion of any unstructured object
+// Create a function to wait for deploment completion of any unstructured object
 func (a Adapter) waitForManifestDeployCompletion(applicationName string, gvr schema.GroupVersionResource, conditionTypeValue string) (*unstructured.Unstructured, error) {
 	klog.V(4).Infof("Waiting for %s manifest deployment completion", applicationName)
 	w, err := a.Client.DynamicClient.Resource(gvr).Namespace(a.Client.Namespace).Watch(metav1.ListOptions{FieldSelector: "metadata.name=" + applicationName})
@@ -313,10 +313,6 @@ func getApplicationURLFromService(client *occlient.Client, applicationName strin
 }
 
 func (a Adapter) getApplicationURL(client *occlient.Client, applicationName string) (fullURL string, err error) {
-	// Need to wait for a second to give the server time to create the artifacts
-	// TODO: Replace wait with a wait for object to be created (need to determine which object!!!)
-	time.Sleep(2 * time.Second)
-
 	routeSupported, _ := client.IsRouteSupported()
 	if routeSupported {
 		labelSelector := fmt.Sprintf("%v=%v", "component", applicationName)
@@ -341,8 +337,8 @@ func (a Adapter) getApplicationURL(client *occlient.Client, applicationName stri
 			}
 		}
 	} else {
-		// Look for other resources, ie Nodeport / Ingress
-		fullURL = getApplicationURLFromService(client, applicationName)
+		// TODO: Look for other resources, ie Ingress
+		return "", errors.New("Route not supported")
 	}
 
 	if fullURL == "" {
@@ -471,6 +467,10 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	}
 
 	s := log.Spinner("Determining the application URL")
+
+	// Need to wait for a second to give the server time to create the artifacts
+	// TODO: Replace wait with a wait for object to be created (need to determine which object!!!)
+	time.Sleep(2 * time.Second)
 
 	fullURL, err := a.getApplicationURL(client, applicationName)
 	if err != nil {
