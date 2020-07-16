@@ -44,6 +44,7 @@ type DeployOptions struct {
 	namespace       string
 	tag             string
 	ManifestSource  []byte
+	DeploymentPort  int
 
 	*genericclioptions.Context
 }
@@ -66,7 +67,11 @@ func (do *DeployOptions) CompleteDevfilePath() {
 // Complete completes deploy args
 func (do *DeployOptions) Complete(name string, cmd *cobra.Command, args []string) (err error) {
 	do.CompleteDevfilePath()
-
+	envInfo, err := envinfo.NewEnvSpecificInfo(do.componentContext)
+	if err != nil {
+		return errors.Wrap(err, "unable to retrieve configuration information")
+	}
+	do.EnvSpecificInfo = envInfo
 	do.Context = genericclioptions.NewDevfileContext(cmd)
 
 	return nil
@@ -76,12 +81,6 @@ func (do *DeployOptions) Complete(name string, cmd *cobra.Command, args []string
 func (do *DeployOptions) Validate() (err error) {
 
 	log.Infof("\nValidation")
-
-	envInfo, err := envinfo.NewEnvSpecificInfo(do.componentContext)
-	if err != nil {
-		return errors.Wrap(err, "unable to retrieve configuration information")
-	}
-	do.EnvSpecificInfo = envInfo
 
 	// Validate the --tag
 	if do.tag == "" {
@@ -154,19 +153,14 @@ func (do *DeployOptions) Validate() (err error) {
 
 	// check if manifestSource contains PORT template variable
 	// if it does, then check we have an port setup in env.yaml
+	do.DeploymentPort = 0
 	if bytes.Contains(manifestBytes, []byte("PORT")) {
-		deploymentPort := 0
-		for _, localURL := range do.EnvSpecificInfo.GetURL() {
-			if localURL.Kind == envinfo.ROUTE {
-				deploymentPort = localURL.Port
-				break
-			}
-		}
-
-		if deploymentPort == 0 {
+		deploymentPort, err := do.EnvSpecificInfo.GetPortByURLKind(envinfo.ROUTE)
+		if err != nil {
 			s.End(false)
-			return errors.New("Unable to find `port` for deployment. `odo url create` must be run prior to `odo deploy`")
+			return errors.Wrap(err, "unable to find `port` for deployment. `odo url create` must be run prior to `odo deploy`")
 		}
+		do.DeploymentPort = deploymentPort
 	}
 
 	s.End(true)
