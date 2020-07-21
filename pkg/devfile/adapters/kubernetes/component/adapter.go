@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/klog"
 
-	routev1 "github.com/openshift/api/route/v1"
 	"github.com/openshift/odo/pkg/component"
 	"github.com/openshift/odo/pkg/config"
 	"github.com/openshift/odo/pkg/devfile/adapters/common"
@@ -44,7 +43,7 @@ import (
 )
 
 const (
-	DeployWaitTimeout     = 30 * time.Second
+	//DeployWaitTimeout     = 30 * time.Second
 	DeployComponentSuffix = "-deploy"
 )
 
@@ -216,138 +215,6 @@ func substitueYamlVariables(baseYaml []byte, yamlSubstitutions map[string]string
 	return baseYaml
 }
 
-func getNamedCondition(route *unstructured.Unstructured, conditionTypeValue string) map[string]interface{} {
-	status := route.UnstructuredContent()["status"].(map[string]interface{})
-	if status != nil && status["conditions"] != nil {
-		conditions := status["conditions"].([]interface{})
-		for i := range conditions {
-			c := conditions[i].(map[string]interface{})
-			klog.V(4).Infof("Condition returned\n%s\n", c)
-			if c["type"] == conditionTypeValue {
-				return c
-			}
-		}
-	}
-	return nil
-}
-
-// Create a function to wait for deploment completion of any unstructured object
-func (a Adapter) waitForManifestDeployCompletion(applicationName string, gvr schema.GroupVersionResource, conditionTypeValue string) (*unstructured.Unstructured, error) {
-	klog.V(4).Infof("Waiting for %s manifest deployment completion", applicationName)
-	w, err := a.Client.DynamicClient.Resource(gvr).Namespace(a.Client.Namespace).Watch(metav1.ListOptions{FieldSelector: "metadata.name=" + applicationName})
-	if err != nil {
-		return nil, errors.Wrapf(err, "unable to watch deployment")
-	}
-	defer w.Stop()
-	success := make(chan *unstructured.Unstructured)
-	failure := make(chan error)
-
-	go func() {
-		defer close(success)
-		defer close(failure)
-
-		for {
-			val, ok := <-w.ResultChan()
-			if !ok {
-				failure <- errors.New("watch channel was closed")
-				return
-			}
-			if watchObject, ok := val.Object.(*unstructured.Unstructured); ok {
-				// TODO: Add more details on what to check to see if object deployment is complete
-				// Currently only checks to see if status.conditions[] contains a condition with type = conditionTypeValue
-				condition := getNamedCondition(watchObject, conditionTypeValue)
-				if condition != nil {
-					if condition["status"] == "Fail" {
-						failure <- fmt.Errorf("manifest deployment %s failed", applicationName)
-						return
-					} else if condition["status"] == "True" {
-						success <- watchObject
-						return
-					}
-				}
-			}
-		}
-	}()
-
-	select {
-	case val := <-success:
-		return val, nil
-	case err := <-failure:
-		return nil, err
-	case <-time.After(DeployWaitTimeout):
-		return nil, errors.Errorf("timeout while waiting for %s manifest deployment completion", applicationName)
-	}
-}
-
-// GetProtocol returns the protocol string
-func getProtocol(route routev1.Route) string {
-	if route.Spec.TLS != nil {
-		return "https"
-	}
-	return "http"
-}
-
-func pluraliseKind(gvkKind string) (kind string) {
-	// gvkKind is normally a singular noun and we need to have the kind as a plural
-	// i.e. Deploment => Deployments
-	//      Route => Routes
-	//      Ingress => Ingresses
-	kind = strings.ToLower(gvkKind + "s")
-	if strings.HasSuffix(gvkKind, "s") {
-		kind = strings.ToLower(gvkKind + "es")
-	}
-	return kind
-}
-
-func getApplicationURLFromService(client *occlient.Client, applicationName string) (fullURL string) {
-	service, err := client.GetServiceFromName(applicationName)
-	if err != nil {
-		return ""
-	}
-
-	if service.Status.LoadBalancer.Size() > 0 {
-		fullURL = fmt.Sprintf("http://%s:%d", service.Status.LoadBalancer.Ingress[0].Hostname, service.Spec.Ports[0].NodePort)
-	}
-
-	return fullURL
-}
-
-func (a Adapter) getApplicationURL(client *occlient.Client, applicationName string) (fullURL string, err error) {
-	routeSupported, _ := client.IsRouteSupported()
-	if routeSupported {
-		labelSelector := fmt.Sprintf("%v=%v", "component", applicationName)
-		routes, err := client.ListRoutes(labelSelector)
-		if err != nil || len(routes) <= 0 {
-			// No URL found - try looking in the Service
-			fullURL = getApplicationURLFromService(client, applicationName)
-			if fullURL == "" {
-				// still no URL found - try looking for a knative Route therefore need to wait for Service and Route to be setup.
-				knGvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "routes"}
-				knRoute, err := a.waitForManifestDeployCompletion(applicationName, knGvr, "Ready")
-				if err != nil {
-					return "", errors.Wrap(err, "error while waiting for deployment completion")
-				}
-				fullURL = knRoute.UnstructuredContent()["status"].(map[string]interface{})["url"].(string)
-			}
-		} else {
-			if len(routes) == 1 {
-				fullURL = fmt.Sprintf("%s://%s", getProtocol(routes[0]), routes[0].Spec.Host)
-			} else {
-				return "", errors.New("multiple routes found")
-			}
-		}
-	} else {
-		// TODO: Look for other resources, ie Ingress
-		return "", errors.New("Route not supported")
-	}
-
-	if fullURL == "" {
-		return "", errors.New("URL not able to be found")
-	}
-
-	return fullURL, nil
-}
-
 // Build image for devfile project
 func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	// TODO: Can we use a occlient created somewhere else rather than create another
@@ -396,7 +263,7 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 				return errors.New("Failed to decode the manifest yaml")
 			}
 
-			kind := pluraliseKind(gvk.Kind)
+			kind := utils.PluraliseKind(gvk.Kind)
 			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: kind}
 			klog.V(3).Infof("Manifest type: %s", gvr.String())
 
@@ -472,7 +339,8 @@ func (a Adapter) Deploy(parameters common.DeployParameters) (err error) {
 	// TODO: Replace wait with a wait for object to be created (need to determine which object!!!)
 	time.Sleep(2 * time.Second)
 
-	fullURL, err := a.getApplicationURL(client, applicationName)
+	labelSelector := fmt.Sprintf("%v=%v", "component", applicationName)
+	fullURL, err := client.GetApplicationURL(applicationName, labelSelector)
 	if err != nil {
 		s.End(false)
 		log.Errorf("Unable to determine the application URL for component %s: %s", a.ComponentName, err)
@@ -496,7 +364,7 @@ func (a Adapter) DeployDelete(manifest []byte) (err error) {
 				return err
 			}
 			klog.V(3).Infof("Deploy manifest:\n\n%s", deploymentManifest)
-			kind := pluraliseKind(gvk.Kind)
+			kind := utils.PluraliseKind(gvk.Kind)
 			gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: kind}
 			klog.V(3).Infof("Manifest type: %s", gvr.String())
 
