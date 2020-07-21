@@ -43,7 +43,6 @@ import (
 )
 
 const (
-	//DeployWaitTimeout     = 30 * time.Second
 	DeployComponentSuffix = "-deploy"
 )
 
